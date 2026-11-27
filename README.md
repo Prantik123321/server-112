@@ -86,6 +86,7 @@ MONGODB_URI=mongodb+srv://user:pass@cluster0.mongodb.net/?retryWrites=true&w=maj
 ### 3. Database Migration
 In your Supabase project SQL Editor, run the migration script:
 - Copy contents of `supabase/migrations/001_initial_schema.sql` and run it.
+- Then run `supabase/policies/rls_policies.sql` to enable row-level security and restrict direct client access to sensitive columns.
 - (Optional) Run `supabase/seed.sql` to populate initial test users and verified teacher accounts.
 
 ### 4. Running the Development Server
@@ -125,7 +126,7 @@ Tests cover:
 NodeShare is designed to deploy to **Vercel** as a Python serverless function.
 
 1. **Vercel Configuration**: `vercel.json` and `api/index.py` are pre-configured.
-2. **Environment Variables**: Add all variables from `.env.example` into your Vercel Project Settings -> Environment Variables.
+2. **Environment Variables**: Add all required variables from `.env.example` into your Vercel Project Settings -> Environment Variables. Generate a unique production `JWT_SECRET_KEY`; startup rejects the development default and documented placeholders.
 3. **Database Connection Pooling**: Ensure `SUPABASE_POSTGRES_URL` uses port **6543** (Supabase Transaction Pooler / PgBouncer mode) so that ephemeral serverless instances do not exhaust database connections.
 4. **Deploy via GitHub**:
    - Push your code to a GitHub repository.

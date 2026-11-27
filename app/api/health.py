@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from app.config.settings import settings
 from app.database.supabase import check_supabase_health
 from app.database.mongodb import check_mongodb_health
@@ -7,7 +7,7 @@ router = APIRouter(prefix="/health", tags=["System Health"])
 
 
 @router.get("")
-async def health_check():
+async def health_check(response: Response):
     """
     Health check endpoint reporting application status and database connectivity
     for Supabase PostgreSQL and MongoDB Atlas.
@@ -21,6 +21,9 @@ async def health_check():
         overall = "degraded"
     elif "unconfigured" in statuses:
         overall = "pending_configuration"
+
+    if settings.ENVIRONMENT == "production" and overall != "healthy":
+        response.status_code = 503
 
     return {
         "status": overall,

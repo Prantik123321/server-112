@@ -1,5 +1,6 @@
 import pytest
 from app.services.file_service import FileService
+from app.services import file_service
 from app.schemas.files import UploadUrlRequest
 from fastapi import HTTPException
 
@@ -38,3 +39,19 @@ async def test_file_upload_validation_rules():
         await FileService.create_upload_url("user-1", req_too_large)
     assert exc_info.value.status_code == 413
     assert "exceeds maximum allowed limit" in exc_info.value.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_upload_url_fails_when_storage_is_not_configured(monkeypatch):
+    monkeypatch.setattr(file_service, "get_supabase_client", lambda: None)
+    req = UploadUrlRequest(
+        filename="photo.png",
+        mime_type="image/png",
+        size_bytes=1024
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await FileService.create_upload_url("user-1", req)
+
+    assert exc_info.value.status_code == 503
+    assert "storage service is unavailable" in exc_info.value.detail.lower()

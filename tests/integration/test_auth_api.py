@@ -66,6 +66,16 @@ async def test_protected_routes_require_auth(client: httpx.AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_malformed_uuid_path_returns_validation_error(client: httpx.AsyncClient):
+    token = create_access_token("test-user-id", "testuser")
+    response = await client.get(
+        "/api/files/not-a-uuid/download-url",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_authenticated_user_access():
     token = create_access_token("test-user-id", "testuser", is_admin=False, is_teacher=False)
     assert token is not None

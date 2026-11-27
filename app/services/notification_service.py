@@ -13,7 +13,7 @@ class NotificationService:
     async def get_notifications(cls, user_id: str, limit: int = 50, unread_only: bool = False) -> List[NotificationResponse]:
         pool = get_pg_pool()
         if not pool:
-            return []
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database unavailable.")
 
         limit = max(1, min(limit, 100))
         filter_sql = "AND is_read = FALSE" if unread_only else ""

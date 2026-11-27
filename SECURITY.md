@@ -45,6 +45,12 @@ Security is critical to NodeShare. NodeShare enables private peer-to-peer and gr
       raise HTTPException(status_code=403, detail="Forbidden")
   ```
 - Users cannot access, query, or append messages to conversations or groups they do not belong to, preventing Insecure Direct Object Reference (IDOR) attacks.
+- File downloads are limited to the uploader, administrators, or members of a conversation that contains the file. Messages can reference only completed files owned by the sender.
+
+### Supabase Client Database Access
+- Direct client reads of `users` are restricted to explicitly granted profile columns; `password_hash` and `is_admin` are not selectable.
+- Refresh-token records are backend-only. Clients can read, but cannot create or modify, their own notifications.
+- The backend uses its server-side database credentials for privileged operations; never expose those credentials to clients.
 
 ### SQL & NoSQL Injection Protection
 - **PostgreSQL**: All queries use strict positional parameterized binding (`$1, $2, ...`) via `asyncpg`. No string concatenation or string interpolation is permitted in SQL statements.
@@ -61,7 +67,7 @@ Security is critical to NodeShare. NodeShare enables private peer-to-peer and gr
 ### Multi-Stage Validation
 1. **Extension Allowlist**: Only authorized file extensions (`.jpg`, `.png`, `.webp`, `.gif`, `.mp4`, `.webm`, `.mp3`, `.wav`, `.pdf`, `.txt`, `.docx`, `.xlsx`, `.zip`) are accepted. Executables (`.exe`, `.bat`, `.sh`, `.cmd`, `.msi`) are rejected.
 2. **MIME Type Validation**: Rejects untrusted MIME types.
-3. **Magic Bytes Signature Check**: `validate_file_signature()` checks file magic headers via `filetype` to detect spoofed extensions (e.g., an `.exe` renamed to `.png`).
+3. **Magic Bytes Signature Check**: Upload completion reads the stored object's header and validates it with `filetype`, rather than trusting a client-supplied header sample.
 4. **Size & Quota Enforcement**:
    - Max file size: 100 MB per file.
    - User storage quota: 1 GB cumulative per user account.
@@ -73,6 +79,7 @@ Security is critical to NodeShare. NodeShare enables private peer-to-peer and gr
 ### Sliding-Window Rate Limiting
 - **General Endpoints**: 120 requests/minute per IP.
 - **Authentication Endpoints** (`/api/auth/login`, `/api/auth/register`): 10 requests/minute per IP with automatic HTTP 429 response and `Retry-After: 60` headers.
+- The current limiter stores counters in process memory. On serverless platforms this is a per-instance best-effort limit, not a distributed brute-force defense; configure a shared rate limiter or platform WAF for production.
 
 ### Security Response Headers
 Every response includes:

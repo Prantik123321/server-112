@@ -321,7 +321,7 @@ class FriendService:
     async def get_friends_list(cls, user_id: str) -> List[FriendshipResponse]:
         pool = get_pg_pool()
         if not pool:
-            return []
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database unavailable.")
 
         async with pool.acquire() as conn:
             rows = await conn.fetch(
@@ -359,7 +359,7 @@ class FriendService:
         """direction: 'received' (incoming requests) or 'sent' (outgoing requests)."""
         pool = get_pg_pool()
         if not pool:
-            return []
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database unavailable.")
 
         filter_clause = "fr.receiver_id = $1" if direction == "received" else "fr.sender_id = $1"
 

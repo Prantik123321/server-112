@@ -1,7 +1,9 @@
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, Tuple
+import asyncpg
 from fastapi import HTTPException, status
+from starlette.concurrency import run_in_threadpool
 
 from app.config.settings import settings
 from app.database.supabase import get_pg_pool
@@ -49,7 +51,7 @@ class AuthService:
                 detail="Database service unavailable. Please check Supabase configuration."
             )
 
-        pwd_hash = hash_password(data.password)
+        pwd_hash = await run_in_threadpool(hash_password, data.password)
         user_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
 
@@ -59,41 +61,48 @@ class AuthService:
         teacher_title = data.teacher_title if is_teacher else None
 
         async with pool.acquire() as conn:
-            # Check unique username
-            existing = await conn.fetchval(
-                "SELECT id FROM users WHERE username = $1", username
-            )
-            if existing:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Username is already taken. Please choose another username."
-                )
+            try:
+                async with conn.transaction():
+                    # Check unique username
+                    existing = await conn.fetchval(
+                        "SELECT id FROM users WHERE username = $1", username
+                    )
+                    if existing:
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail="Username is already taken. Please choose another username."
+                        )
 
-            # Insert user
-            await conn.execute(
-                """
-                INSERT INTO users (
-                    id, username, full_name, password_hash, is_teacher,
-                    teacher_verified, teacher_title, is_admin, is_online, last_seen_at, created_at, updated_at
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                """,
-                user_id, username, data.full_name.strip(), pwd_hash, is_teacher,
-                teacher_verified, teacher_title, False, True, now, now, now
-            )
+                    await conn.execute(
+                        """
+                        INSERT INTO users (
+                            id, username, full_name, password_hash, is_teacher,
+                            teacher_verified, teacher_title, is_admin, is_online, last_seen_at, created_at, updated_at
+                        )
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                        """,
+                        user_id, username, data.full_name.strip(), pwd_hash, is_teacher,
+                        teacher_verified, teacher_title, False, True, now, now, now
+                    )
 
-            # Generate tokens
-            access_token = create_access_token(user_id, username, is_admin=False, is_teacher=is_teacher)
-            raw_refresh, refresh_hash = generate_refresh_token()
-            refresh_expiry = now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+                    access_token = create_access_token(user_id, username, is_admin=False, is_teacher=is_teacher)
+                    raw_refresh, refresh_hash = generate_refresh_token()
+                    refresh_expiry = now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
 
-            await conn.execute(
-                """
-                INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, created_at)
-                VALUES ($1, $2, $3, $4, $5)
-                """,
-                str(uuid.uuid4()), user_id, refresh_hash, refresh_expiry, now
-            )
+                    await conn.execute(
+                        """
+                        INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, created_at)
+                        VALUES ($1, $2, $3, $4, $5)
+                        """,
+                        str(uuid.uuid4()), user_id, refresh_hash, refresh_expiry, now
+                    )
+            except asyncpg.UniqueViolationError as exc:
+                if exc.constraint_name == "users_username_key":
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Username is already taken. Please choose another username."
+                    ) from exc
+                raise
 
         user_resp = UserResponse(
             id=user_id,
@@ -142,7 +151,9 @@ class AuthService:
                 username
             )
 
-            if not row or not verify_password(data.password, row["password_hash"]):
+            if not row or not await run_in_threadpool(
+                verify_password, data.password, row["password_hash"]
+            ):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid username or password.",
@@ -212,84 +223,99 @@ class AuthService:
         now = datetime.now(timezone.utc)
 
         async with pool.acquire() as conn:
-            token_record = await conn.fetchrow(
-                """
-                SELECT id, user_id, token_hash, expires_at, revoked
-                FROM refresh_tokens
-                WHERE token_hash = $1
-                """,
-                token_hash
-            )
+            async with conn.transaction():
+                token_record = await conn.fetchrow(
+                    """
+                    SELECT id, user_id, token_hash, expires_at, revoked
+                    FROM refresh_tokens
+                    WHERE token_hash = $1
+                    FOR UPDATE
+                    """,
+                    token_hash
+                )
 
-            if not token_record:
+                if not token_record:
+                    invalid_token = True
+                    reuse_detected = False
+                    expired = False
+                    user_row = None
+                elif token_record["revoked"]:
+                    await conn.execute(
+                        "UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1",
+                        token_record["user_id"]
+                    )
+                    invalid_token = False
+                    reuse_detected = True
+                    expired = False
+                    user_row = None
+                elif token_record["expires_at"] < now:
+                    invalid_token = False
+                    reuse_detected = False
+                    expired = True
+                    user_row = None
+                else:
+                    invalid_token = False
+                    reuse_detected = False
+                    expired = False
+                    user_id = str(token_record["user_id"])
+                    user_row = await conn.fetchrow(
+                        """
+                        SELECT id, username, full_name, avatar_url, is_teacher,
+                               teacher_verified, teacher_title, is_admin, status_message,
+                               is_online, last_seen_at, created_at
+                        FROM users WHERE id = $1
+                        """,
+                        user_id
+                    )
+
+                    if user_row:
+                        new_raw_refresh, new_refresh_hash = generate_refresh_token()
+                        new_expiry = now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+
+                        await conn.execute(
+                            """
+                            UPDATE refresh_tokens
+                            SET revoked = TRUE, replaced_by_token_hash = $1
+                            WHERE id = $2
+                            """,
+                            new_refresh_hash, token_record["id"]
+                        )
+
+                        await conn.execute(
+                            """
+                            INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, user_agent, ip_address, created_at)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7)
+                            """,
+                            str(uuid.uuid4()), user_id, new_refresh_hash, new_expiry, user_agent, ip_address, now
+                        )
+
+                        new_access_token = create_access_token(
+                            user_id=user_id,
+                            username=user_row["username"],
+                            is_admin=user_row["is_admin"],
+                            is_teacher=user_row["is_teacher"]
+                        )
+
+            if invalid_token:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid refresh token."
                 )
-
-            # Security: Detect reuse of revoked token (Token family breach protection)
-            if token_record["revoked"]:
-                # Potential token compromise: Revoke all active sessions for this user
-                await conn.execute(
-                    "UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1",
-                    token_record["user_id"]
-                )
+            if reuse_detected:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Revoked token reuse detected. All sessions terminated for security."
                 )
-
-            # Check expiration
-            if token_record["expires_at"] < now:
+            if expired:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Refresh token has expired."
                 )
-
-            user_id = str(token_record["user_id"])
-            user_row = await conn.fetchrow(
-                """
-                SELECT id, username, full_name, avatar_url, is_teacher,
-                       teacher_verified, teacher_title, is_admin, status_message,
-                       is_online, last_seen_at, created_at
-                FROM users WHERE id = $1
-                """,
-                user_id
-            )
-
             if not user_row:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="User account no longer exists."
                 )
-
-            # Token Rotation: Revoke old token and issue new token
-            new_raw_refresh, new_refresh_hash = generate_refresh_token()
-            new_expiry = now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-
-            await conn.execute(
-                """
-                UPDATE refresh_tokens
-                SET revoked = TRUE, replaced_by_token_hash = $1
-                WHERE id = $2
-                """,
-                new_refresh_hash, token_record["id"]
-            )
-
-            await conn.execute(
-                """
-                INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, user_agent, ip_address, created_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                """,
-                str(uuid.uuid4()), user_id, new_refresh_hash, new_expiry, user_agent, ip_address, now
-            )
-
-            new_access_token = create_access_token(
-                user_id=user_id,
-                username=user_row["username"],
-                is_admin=user_row["is_admin"],
-                is_teacher=user_row["is_teacher"]
-            )
 
         user_resp = UserResponse(
             id=user_id,
@@ -318,7 +344,10 @@ class AuthService:
     async def logout_user(user_id: str, raw_refresh_token: Optional[str] = None) -> None:
         pool = get_pg_pool()
         if not pool:
-            return
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database service unavailable."
+            )
 
         now = datetime.now(timezone.utc)
         async with pool.acquire() as conn:
@@ -361,13 +390,15 @@ class AuthService:
             user = await conn.fetchrow(
                 "SELECT password_hash FROM users WHERE id = $1", user_id
             )
-            if not user or not verify_password(data.current_password, user["password_hash"]):
+            if not user or not await run_in_threadpool(
+                verify_password, data.current_password, user["password_hash"]
+            ):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Current password is incorrect."
                 )
 
-            new_hash = hash_password(data.new_password)
+            new_hash = await run_in_threadpool(hash_password, data.new_password)
             now = datetime.now(timezone.utc)
 
             await conn.execute(

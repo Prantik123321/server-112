@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Optional
+from uuid import UUID
 from pydantic import BaseModel, Field
 
 
@@ -18,8 +19,8 @@ class UploadUrlResponse(BaseModel):
 
 
 class CompleteUploadRequest(BaseModel):
-    file_id: str
-    header_bytes_base64: Optional[str] = None
+    file_id: UUID
+    header_bytes_base64: Optional[str] = Field(None, max_length=16384)
 
 
 class FileResponse(BaseModel):

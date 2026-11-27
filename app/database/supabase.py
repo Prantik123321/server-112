@@ -121,12 +121,9 @@ async def check_supabase_health() -> dict:
         if not settings.SUPABASE_POSTGRES_URL or "YOUR_REAL_DB_PASSWORD" in settings.SUPABASE_POSTGRES_URL:
             return {
                 "status": "unconfigured",
-                "message": _last_pg_error or "SUPABASE_POSTGRES_URL not set",
+                "message": "PostgreSQL connection is not configured.",
             }
-        resp = {"status": "disconnected", "message": "Connection pool not initialized"}
-        if _last_pg_error:
-            resp["error"] = _last_pg_error
-        return resp
+        return {"status": "disconnected", "message": "PostgreSQL connection pool is unavailable."}
 
     try:
         async with _pg_pool.acquire() as conn:
@@ -135,6 +132,6 @@ async def check_supabase_health() -> dict:
                 return {"status": "healthy", "latency_ms": 1}
     except Exception as e:
         logger.error(f"Supabase health check failed: {e}")
-        return {"status": "unhealthy", "error": str(e)}
+        return {"status": "unhealthy", "message": "PostgreSQL health check failed."}
 
     return {"status": "unknown"}

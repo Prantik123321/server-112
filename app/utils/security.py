@@ -4,7 +4,7 @@ import hashlib
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
 from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError, InvalidHashError
+from argon2.exceptions import InvalidHashError, VerificationError
 import jwt
 
 from app.config.settings import settings
@@ -32,7 +32,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify plain password against stored Argon2id hash."""
     try:
         return _password_hasher.verify(hashed_password, plain_password)
-    except (VerifyMismatchError, InvalidHashError):
+    except (VerificationError, InvalidHashError):
         return False
 
 
@@ -94,7 +94,7 @@ def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
         if payload.get("type") != "access":
             return None
         return payload
-    except (jwt.PyJWTError, Exception):
+    except jwt.PyJWTError:
         return None
 
 

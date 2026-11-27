@@ -24,8 +24,6 @@ logger = logging.getLogger("nodeshare.main")
 async def lifespan(app: FastAPI):
     """Manage application startup and shutdown lifecycle."""
     logger.info("Initializing NodeShare backend services...")
-    if settings.ENVIRONMENT == "production" and "change-this" in settings.JWT_SECRET_KEY:
-        logger.warning("JWT_SECRET_KEY is still using a placeholder value in production!")
     # Initialize database connections
     await init_supabase_db()
     await init_mongodb()

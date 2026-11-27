@@ -1,6 +1,6 @@
 -- NodeShare Seed Data for Development
 -- Passwords are hashed with Argon2id for password: "Password123!"
--- Hash: $argon2id$v=19$m=65536,t=3,p=4$q+wz/jVbK1bV03qGjZ9n6w$9lV1U6m+mN9cK0H8HlX6q8j8iU0k7N4aY1w2Z3x4y5A
+-- Hash: $argon2id$v=19$m=65536,t=3,p=4$a47caMC+dLCUOfu+XMRUxw$IilrDuIl0/LkGIYbX4cDI83NlCgA5JUiRnb4rZgspUg
 
 -- Insert Admin User
 INSERT INTO users (id, username, full_name, password_hash, is_teacher, teacher_verified, is_admin, status_message)
@@ -8,7 +8,7 @@ VALUES (
     '00000000-0000-0000-0000-000000000001',
     'admin',
     'System Administrator',
-    '$argon2id$v=19$m=65536,t=3,p=4$q+wz/jVbK1bV03qGjZ9n6w$9lV1U6m+mN9cK0H8HlX6q8j8iU0k7N4aY1w2Z3x4y5A',
+    '$argon2id$v=19$m=65536,t=3,p=4$a47caMC+dLCUOfu+XMRUxw$IilrDuIl0/LkGIYbX4cDI83NlCgA5JUiRnb4rZgspUg',
     FALSE,
     FALSE,
     TRUE,
@@ -21,7 +21,7 @@ VALUES (
     '00000000-0000-0000-0000-000000000002',
     'prof_rahim',
     'Abdur Rahim (আব্দুর রহিম)',
-    '$argon2id$v=19$m=65536,t=3,p=4$q+wz/jVbK1bV03qGjZ9n6w$9lV1U6m+mN9cK0H8HlX6q8j8iU0k7N4aY1w2Z3x4y5A',
+    '$argon2id$v=19$m=65536,t=3,p=4$a47caMC+dLCUOfu+XMRUxw$IilrDuIl0/LkGIYbX4cDI83NlCgA5JUiRnb4rZgspUg',
     TRUE,
     TRUE,
     'Assistant Professor of Computer Science',
@@ -35,7 +35,7 @@ VALUES (
     '00000000-0000-0000-0000-000000000003',
     'prantik',
     'Prantik Das (প্রান্তিক দাস)',
-    '$argon2id$v=19$m=65536,t=3,p=4$q+wz/jVbK1bV03qGjZ9n6w$9lV1U6m+mN9cK0H8HlX6q8j8iU0k7N4aY1w2Z3x4y5A',
+    '$argon2id$v=19$m=65536,t=3,p=4$a47caMC+dLCUOfu+XMRUxw$IilrDuIl0/LkGIYbX4cDI83NlCgA5JUiRnb4rZgspUg',
     FALSE,
     FALSE,
     FALSE,
@@ -48,7 +48,7 @@ VALUES (
     '00000000-0000-0000-0000-000000000004',
     'tanvir',
     'Tanvir Ahmed',
-    '$argon2id$v=19$m=65536,t=3,p=4$q+wz/jVbK1bV03qGjZ9n6w$9lV1U6m+mN9cK0H8HlX6q8j8iU0k7N4aY1w2Z3x4y5A',
+    '$argon2id$v=19$m=65536,t=3,p=4$a47caMC+dLCUOfu+XMRUxw$IilrDuIl0/LkGIYbX4cDI83NlCgA5JUiRnb4rZgspUg',
     FALSE,
     FALSE,
     FALSE,

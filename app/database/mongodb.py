@@ -68,34 +68,35 @@ async def ensure_mongodb() -> Optional[AsyncIOMotorDatabase]:
 
 async def _ensure_mongo_indexes(db: AsyncIOMotorDatabase) -> None:
     """Create essential MongoDB indexes for message retrieval and idempotency."""
-    try:
-        messages = db["messages"]
-        # Index for paginated conversation history lookup
-        await messages.create_index(
-            [("conversation_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)],
-            name="idx_conv_created"
-        )
-        # Unique index on message_id
-        await messages.create_index(
-            [("message_id", pymongo.ASCENDING)],
-            unique=True,
-            name="idx_unique_message_id"
-        )
-        # Sparse unique index on idempotency_key for deduplication
-        await messages.create_index(
-            [("idempotency_key", pymongo.ASCENDING)],
-            unique=True,
-            sparse=True,
-            name="idx_unique_idempotency_key"
-        )
-        # Index on sender_id
-        await messages.create_index(
-            [("sender_id", pymongo.ASCENDING)],
-            name="idx_sender_id"
-        )
-        logger.info("MongoDB message indexes ensured.")
-    except Exception as e:
-        logger.error(f"Failed to ensure MongoDB indexes: {e}")
+    messages = db["messages"]
+    await messages.update_many(
+        {"idempotency_key": {"$type": "null"}},
+        {"$unset": {"idempotency_key": ""}},
+    )
+    # Index for paginated conversation history lookup
+    await messages.create_index(
+        [("conversation_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)],
+        name="idx_conv_created"
+    )
+    # Unique index on message_id
+    await messages.create_index(
+        [("message_id", pymongo.ASCENDING)],
+        unique=True,
+        name="idx_unique_message_id"
+    )
+    # Sparse unique index on idempotency_key for deduplication
+    await messages.create_index(
+        [("idempotency_key", pymongo.ASCENDING)],
+        unique=True,
+        sparse=True,
+        name="idx_unique_idempotency_key"
+    )
+    # Index on sender_id
+    await messages.create_index(
+        [("sender_id", pymongo.ASCENDING)],
+        name="idx_sender_id"
+    )
+    logger.info("MongoDB message indexes ensured.")
 
 
 async def close_mongodb() -> None:
@@ -118,10 +119,8 @@ async def check_mongodb_health() -> dict:
     global _mongo_client, _last_mongo_error
     if not _mongo_client:
         if not settings.MONGODB_URI:
-            return {"status": "unconfigured", "message": "MONGODB_URI not set"}
+            return {"status": "unconfigured", "message": "MongoDB connection is not configured."}
         resp = {"status": "disconnected", "message": "Client not initialized"}
-        if _last_mongo_error:
-            resp["error"] = _last_mongo_error
         return resp
 
     try:
@@ -129,4 +128,4 @@ async def check_mongodb_health() -> dict:
         return {"status": "healthy"}
     except Exception as e:
         logger.error(f"MongoDB health check failed: {e}")
-        return {"status": "unhealthy", "error": str(e)}
+        return {"status": "unhealthy", "message": "MongoDB health check failed."}

@@ -1,5 +1,6 @@
 from typing import Dict, Any, List, Optional
 from datetime import datetime
+from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 from app.schemas.conversations import ConversationResponse, ConversationCreate
 from app.schemas.messages import MessageCreate, MessageResponse
@@ -26,22 +27,22 @@ async def create_or_get_direct_conversation(
     """
     return await ConversationService.get_or_create_direct_conversation(
         current_user["id"],
-        req.participant_id
+        str(req.participant_id)
     )
 
 
 @router.get("/{id}", response_model=ConversationResponse)
 async def get_conversation_details(
-    id: str,
+    id: UUID,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """Get metadata, participants, and unread count for a conversation."""
-    return await ConversationService.get_conversation_by_id(id, current_user["id"])
+    return await ConversationService.get_conversation_by_id(str(id), current_user["id"])
 
 
 @router.get("/{id}/messages", response_model=List[MessageResponse])
 async def get_conversation_messages(
-    id: str,
+    id: UUID,
     limit: int = Query(50, ge=1, le=100),
     before_timestamp: Optional[datetime] = Query(None),
     current_user: Dict[str, Any] = Depends(get_current_user)
@@ -51,7 +52,7 @@ async def get_conversation_messages(
     Supports backward pagination using before_timestamp.
     """
     return await MessageService.get_messages(
-        conversation_id=id,
+        conversation_id=str(id),
         user_id=current_user["id"],
         limit=limit,
         before_timestamp=before_timestamp
@@ -60,7 +61,7 @@ async def get_conversation_messages(
 
 @router.post("/{id}/messages", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
 async def send_conversation_message(
-    id: str,
+    id: UUID,
     req: MessageCreate,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
@@ -70,7 +71,7 @@ async def send_conversation_message(
     Supports idempotency key for deduplication.
     """
     return await MessageService.send_message(
-        conversation_id=id,
+        conversation_id=str(id),
         sender_id=current_user["id"],
         sender_username=current_user["username"],
         sender_full_name=current_user["full_name"],
@@ -80,9 +81,9 @@ async def send_conversation_message(
 
 @router.post("/{id}/read", status_code=status.HTTP_200_OK)
 async def mark_conversation_as_read(
-    id: str,
-    last_message_id: str = Query(...),
+    id: UUID,
+    last_message_id: UUID = Query(...),
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """Mark conversation messages as read up to last_message_id."""
-    return await MessageService.mark_messages_read(id, current_user["id"], last_message_id)
+    return await MessageService.mark_messages_read(str(id), current_user["id"], str(last_message_id))

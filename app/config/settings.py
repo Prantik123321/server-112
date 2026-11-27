@@ -1,7 +1,9 @@
-import os
-from typing import List
-from pydantic import Field
+from typing import List, Literal
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+DEFAULT_JWT_SECRET_KEY = "nodeshare-development-secret-key-must-be-changed-in-production-32chars"
 
 
 class Settings(BaseSettings):
@@ -22,8 +24,8 @@ class Settings(BaseSettings):
 
     # Security & Tokens
     # 32+ byte secret string for JWT HS256 signing
-    JWT_SECRET_KEY: str = "nodeshare-development-secret-key-must-be-changed-in-production-32chars"
-    JWT_ALGORITHM: str = "HS256"
+    JWT_SECRET_KEY: str = DEFAULT_JWT_SECRET_KEY
+    JWT_ALGORITHM: Literal["HS256"] = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
@@ -62,6 +64,23 @@ class Settings(BaseSettings):
     # File Storage Quotas & Limits (Bytes)
     MAX_FILE_SIZE_BYTES: int = 104857600  # 100 MB
     STORAGE_QUOTA_PER_USER_BYTES: int = 1073741824  # 1 GB
+
+    @model_validator(mode="after")
+    def validate_production_jwt_secret(self):
+        if self.ENVIRONMENT.lower() == "production":
+            secret = self.JWT_SECRET_KEY
+            if (
+                secret == DEFAULT_JWT_SECRET_KEY
+                or len(secret.encode("utf-8")) < 32
+                or any(
+                    marker in secret.lower()
+                    for marker in ("change-this", "your-", "example", "generate-a-random")
+                )
+            ):
+                raise ValueError(
+                    "Production requires a unique JWT_SECRET_KEY of at least 32 bytes."
+                )
+        return self
 
 
 # Global singleton instance

@@ -1,5 +1,9 @@
 import pytest
 import time
+from pydantic import ValidationError
+from pathlib import Path
+import re
+from app.config.settings import DEFAULT_JWT_SECRET_KEY, Settings
 from app.utils.security import (
     hash_password,
     verify_password,
@@ -26,6 +30,10 @@ def test_argon2id_hashing():
     assert hashed.startswith("$argon2id$")
     assert verify_password(pwd, hashed) is True
     assert verify_password("WrongPassword!", hashed) is False
+
+
+def test_malformed_password_hash_is_treated_as_failed_verification():
+    assert verify_password("Password123!", "not-an-argon2-hash") is False
 
 
 def test_username_normalization_and_validation():
@@ -123,8 +131,25 @@ def test_magic_bytes_signature_validation():
     text_header = b"Hello, this is a plain text file header."
     valid, detected = validate_file_signature(text_header, "text/plain")
     assert valid is True
+    valid, detected = validate_file_signature(text_header, "TEXT/PLAIN; charset=utf-8")
+    assert valid is True
+    assert detected == "text/plain"
 
     # Corrupt or mismatched binary header
     corrupt_header = b"NOT_A_PNG_HEADER"
     valid, _ = validate_file_signature(corrupt_header, "image/png")
     assert valid is False
+
+
+def test_production_settings_reject_default_jwt_secret():
+    with pytest.raises(ValidationError, match="Production requires a unique JWT_SECRET_KEY"):
+        Settings(ENVIRONMENT="production", JWT_SECRET_KEY=DEFAULT_JWT_SECRET_KEY)
+    with pytest.raises(ValidationError, match="Production requires a unique JWT_SECRET_KEY"):
+        Settings(ENVIRONMENT="production", JWT_SECRET_KEY="generate-a-random-32-byte-hex-key")
+
+
+def test_seed_password_hashes_are_valid():
+    seed_sql = Path(__file__).resolve().parents[2] / "supabase" / "seed.sql"
+    hashes = re.findall(r"'(\$argon2id\$[^']+)'", seed_sql.read_text())
+    assert hashes
+    assert all(verify_password("Password123!", value) for value in hashes)

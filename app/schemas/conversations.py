@@ -1,10 +1,11 @@
 from datetime import datetime
 from typing import Optional, List, Dict, Any
+from uuid import UUID
 from pydantic import BaseModel
 
 
 class ConversationCreate(BaseModel):
-    participant_id: str
+    participant_id: UUID
 
 
 class ConversationParticipant(BaseModel):

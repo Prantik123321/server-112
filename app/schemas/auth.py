@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class UserResponse(BaseModel):
@@ -24,7 +24,15 @@ class RegisterRequest(BaseModel):
     password: str = Field(..., min_length=8, max_length=128)
     confirm_password: str = Field(..., min_length=8, max_length=128)
     is_teacher: bool = False
-    teacher_title: Optional[str] = None
+    teacher_title: Optional[str] = Field(None, max_length=100)
+
+    @field_validator("full_name")
+    @classmethod
+    def normalize_full_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 2:
+            raise ValueError("Full name must contain at least 2 non-whitespace characters.")
+        return normalized
 
     @model_validator(mode="after")
     def passwords_match(self):

@@ -1,5 +1,6 @@
 # app/services/conversation_service.py
 import uuid
+import logging
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
@@ -11,6 +12,8 @@ from app.schemas.conversations import (
     ConversationResponse,
     ConversationParticipant,
 )
+
+logger = logging.getLogger("nodeshare.services.conversations")
 
 
 class ConversationService:
@@ -35,78 +38,73 @@ class ConversationService:
                 detail="Database unavailable."
             )
 
+        existing_conv_id = None
+        new_conv_id = None
         async with pool.acquire() as conn:
-            # 1. Block check
-            block = await conn.fetchval(
-                """
-                SELECT 1 FROM user_blocks
-                WHERE (blocker_id = $1 AND blocked_id = $2)
-                   OR (blocker_id = $2 AND blocked_id = $1)
-                """,
-                user_id_1, user_id_2
-            )
-            if block:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Cannot start conversation with this user."
+            async with conn.transaction():
+                user_ids = sorted((user_id_1, user_id_2))
+                pair_lock_key = ":".join(user_ids)
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                    pair_lock_key
                 )
 
-            # 2. Existing direct conversation check
-            existing_conv_id = await conn.fetchval(
-                """
-                SELECT cp1.conversation_id
-                FROM conversation_participants cp1
-                JOIN conversation_participants cp2
-                    ON cp1.conversation_id = cp2.conversation_id
-                JOIN conversations c
-                    ON cp1.conversation_id = c.id
-                WHERE c.type = 'direct'
-                  AND cp1.user_id = $1
-                  AND cp2.user_id = $2
-                """,
-                user_id_1, user_id_2
-            )
+                # 1. Block check
+                block = await conn.fetchval(
+                    """
+                    SELECT 1 FROM user_blocks
+                    WHERE (blocker_id = $1 AND blocked_id = $2)
+                       OR (blocker_id = $2 AND blocked_id = $1)
+                    """,
+                    user_id_1, user_id_2
+                )
+                if block:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Cannot start conversation with this user."
+                    )
 
-            if existing_conv_id:
-                return await cls.get_conversation_by_id(
-                    str(existing_conv_id), user_id_1
+                # 2. Existing direct conversation check
+                existing_conv_id = await conn.fetchval(
+                    """
+                    SELECT cp1.conversation_id
+                    FROM conversation_participants cp1
+                    JOIN conversation_participants cp2
+                        ON cp1.conversation_id = cp2.conversation_id
+                    JOIN conversations c
+                        ON cp1.conversation_id = c.id
+                    WHERE c.type = 'direct'
+                      AND cp1.user_id = $1
+                      AND cp2.user_id = $2
+                    """,
+                    user_id_1, user_id_2
                 )
 
-            # 3. Create new conversation
-            now = datetime.now(timezone.utc)
-            new_conv_id = str(uuid.uuid4())
+                if not existing_conv_id:
+                    # 3. Create new conversation and participants atomically.
+                    now = datetime.now(timezone.utc)
+                    new_conv_id = str(uuid.uuid4())
+                    await conn.execute(
+                        """
+                        INSERT INTO conversations
+                            (id, type, last_message_at, created_at, updated_at)
+                        VALUES ($1, 'direct', $2, $2, $2)
+                        """,
+                        new_conv_id, now
+                    )
 
-            await conn.execute(
-                """
-                INSERT INTO conversations
-                    (id, type, last_message_at, created_at, updated_at)
-                VALUES ($1, 'direct', $2, $2, $2)
-                """,
-                new_conv_id, now
-            )
+                    for participant_id in (user_id_1, user_id_2):
+                        await conn.execute(
+                            """
+                            INSERT INTO conversation_participants
+                                (id, conversation_id, user_id, joined_at)
+                            VALUES ($1, $2, $3, $4)
+                            """,
+                            str(uuid.uuid4()), new_conv_id, participant_id, now
+                        )
 
-            # 4. Insert participants - SEPARATE QUERIES to avoid placeholder mismatch
-            p1_id = str(uuid.uuid4())
-            p2_id = str(uuid.uuid4())
-
-            await conn.execute(
-                """
-                INSERT INTO conversation_participants
-                    (id, conversation_id, user_id, joined_at)
-                VALUES ($1, $2, $3, $4)
-                """,
-                p1_id, new_conv_id, user_id_1, now
-            )
-
-            await conn.execute(
-                """
-                INSERT INTO conversation_participants
-                    (id, conversation_id, user_id, joined_at)
-                VALUES ($1, $2, $3, $4)
-                """,
-                p2_id, new_conv_id, user_id_2, now
-            )
-
+        if existing_conv_id:
+            return await cls.get_conversation_by_id(str(existing_conv_id), user_id_1)
         return await cls.get_conversation_by_id(new_conv_id, user_id_1)
 
     @classmethod
@@ -114,7 +112,10 @@ class ConversationService:
 
         pool = get_pg_pool()
         if not pool:
-            return []
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database unavailable."
+            )
 
         async with pool.acquire() as conn:
             conv_rows = await conn.fetch(
@@ -266,7 +267,7 @@ class ConversationService:
                         "is_deleted": False
                     })
             except Exception:
-                pass
+                logger.exception("MongoDB lookup failed while building conversation response.")
 
         return ConversationResponse(
             id=str(conv["id"]),
@@ -288,7 +289,10 @@ class ConversationService:
         """Validate conversation membership through Supabase before accessing MongoDB messages."""
         pool = get_pg_pool()
         if not pool:
-            return False
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database unavailable."
+            )
         async with pool.acquire() as conn:
             is_member = await conn.fetchval(
                 """

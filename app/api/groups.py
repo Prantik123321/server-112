@@ -1,6 +1,7 @@
 from typing import Dict, Any
+from uuid import UUID
 from fastapi import APIRouter, Depends, status
-from app.schemas.groups import GroupCreate, GroupMemberAdd, GroupResponse
+from app.schemas.groups import GroupCreate, GroupMemberAdd, GroupOwnershipTransfer, GroupResponse
 from app.services.group_service import GroupService
 from app.dependencies.auth import get_current_user
 
@@ -22,31 +23,41 @@ async def create_group(
 
 @router.get("/{id}", response_model=GroupResponse)
 async def get_group(
-    id: str,
+    id: UUID,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """Retrieve group details and member list for authorized members."""
-    return await GroupService.get_group_by_id(id, current_user["id"])
+    return await GroupService.get_group_by_id(str(id), current_user["id"])
 
 
 @router.post("/{id}/members", status_code=status.HTTP_200_OK)
 async def add_group_member(
-    id: str,
+    id: UUID,
     req: GroupMemberAdd,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """Add a member to the group (Authorized for group owners and admins)."""
-    return await GroupService.add_member(id, current_user["id"], req)
+    return await GroupService.add_member(str(id), current_user["id"], req)
+
+
+@router.put("/{id}/owner", status_code=status.HTTP_200_OK)
+async def transfer_group_ownership(
+    id: UUID,
+    req: GroupOwnershipTransfer,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Transfer group ownership to an existing member."""
+    return await GroupService.transfer_ownership(str(id), current_user["id"], req)
 
 
 @router.delete("/{id}/members/{user_id}", status_code=status.HTTP_200_OK)
 async def remove_group_member(
-    id: str,
-    user_id: str,
+    id: UUID,
+    user_id: UUID,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Remove a member from the group.
     Authorized for owners/admins to remove members, or for members to leave the group.
     """
-    return await GroupService.remove_member(id, current_user["id"], user_id)
+    return await GroupService.remove_member(str(id), current_user["id"], str(user_id))

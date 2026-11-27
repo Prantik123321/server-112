@@ -79,13 +79,22 @@ def validate_file_signature(content_header: bytes, expected_mime: Optional[str] 
     if not content_header:
         return False, "File content is empty."
 
+    if expected_mime:
+        expected_mime = expected_mime.split(";")[0].strip().lower()
+
     # Plain text detection
     if expected_mime == "text/plain":
         try:
             # Check if bytes are valid UTF-8 / ASCII text
             content_header.decode("utf-8")
             return True, "text/plain"
-        except UnicodeDecodeError:
+        except UnicodeDecodeError as exc:
+            if exc.reason == "unexpected end of data" and exc.end == len(content_header):
+                try:
+                    content_header[:exc.start].decode("utf-8")
+                    return True, "text/plain"
+                except UnicodeDecodeError:
+                    pass
             return False, "Content does not match valid text/plain encoding."
 
     # Use filetype for binary magic bytes detection

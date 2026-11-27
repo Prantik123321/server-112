@@ -1,8 +1,12 @@
 import difflib
+import logging
 from typing import List, Dict, Any, Optional
+import asyncpg
 from fastapi import HTTPException, status
 from app.database.supabase import get_pg_pool
 from app.schemas.search import UserSearchResult
+
+logger = logging.getLogger("nodeshare.services.search")
 
 
 class SearchService:
@@ -36,7 +40,10 @@ class SearchService:
 
         pool = get_pg_pool()
         if not pool:
-            return []
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database unavailable."
+            )
 
         clean_q = query.lower()
         teacher_filter = "AND (is_teacher = TRUE AND teacher_verified = TRUE)" if teachers_only else ""
@@ -118,8 +125,8 @@ class SearchService:
                             match_reason=cls._tier_description(tier)
                         )
                     )
-        except Exception as e:
-            # Fallback for systems where pg_trgm might still be loading
+        except asyncpg.UndefinedFunctionError:
+            logger.warning("pg_trgm similarity function is unavailable; using Python search fallback.")
             results = await cls._python_fallback_search(pool, query, limit, offset, teachers_only)
 
         return results
@@ -136,7 +143,13 @@ class SearchService:
         """In-memory trigram/fuzzy ranking fallback if pg_trgm extension isn't activated."""
         teacher_filter = "WHERE is_teacher = TRUE AND teacher_verified = TRUE" if teachers_only else ""
         async with pool.acquire() as conn:
-            rows = await conn.fetch(f"SELECT * FROM users {teacher_filter}")
+            rows = await conn.fetch(
+                f"""
+                SELECT id, username, full_name, avatar_url, is_online,
+                       is_teacher, teacher_verified, teacher_title
+                FROM users {teacher_filter}
+                """
+            )
 
         q_lower = query.lower()
         scored = []

@@ -174,7 +174,10 @@ class UserService:
     async def update_presence(user_id: str, is_online: bool) -> None:
         pool = get_pg_pool()
         if not pool:
-            return
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database unavailable."
+            )
         now = datetime.now(timezone.utc)
         async with pool.acquire() as conn:
             await conn.execute(

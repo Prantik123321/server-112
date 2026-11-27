@@ -1,4 +1,5 @@
 from typing import Dict, Any, List, Optional
+from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 from app.schemas.auth import UserResponse
 from app.schemas.users import UserUpdateRequest, TeacherVerifyRequest
@@ -48,16 +49,16 @@ async def search_users(
 
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user_profile(
-    user_id: str,
+    user_id: UUID,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """Retrieve public profile of a user by UUID."""
-    return await UserService.get_user_by_id(user_id)
+    return await UserService.get_user_by_id(str(user_id))
 
 
 @router.patch("/{user_id}/verify-teacher", response_model=UserResponse)
 async def verify_teacher_account(
-    user_id: str,
+    user_id: UUID,
     req: TeacherVerifyRequest,
     admin_user: Dict[str, Any] = Depends(get_current_admin)
 ):
@@ -65,4 +66,4 @@ async def verify_teacher_account(
     Verify or unverify a teacher account.
     Restricted to system administrators.
     """
-    return await UserService.verify_teacher(user_id, req)
+    return await UserService.verify_teacher(str(user_id), req)
