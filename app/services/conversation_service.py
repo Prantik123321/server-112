@@ -1,4 +1,4 @@
-
+# app/services/conversation_service.py
 import uuid
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
@@ -29,7 +29,6 @@ class ConversationService:
             )
 
         pool = get_pg_pool()
-
         if not pool:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -37,26 +36,22 @@ class ConversationService:
             )
 
         async with pool.acquire() as conn:
-
-            # Check user blocks
+            # 1. Block check
             block = await conn.fetchval(
                 """
-                SELECT 1
-                FROM user_blocks
+                SELECT 1 FROM user_blocks
                 WHERE (blocker_id = $1 AND blocked_id = $2)
                    OR (blocker_id = $2 AND blocked_id = $1)
                 """,
-                user_id_1,
-                user_id_2
+                user_id_1, user_id_2
             )
-
             if block:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Cannot start conversation with this user."
                 )
 
-            # Check existing direct conversation
+            # 2. Existing direct conversation check
             existing_conv_id = await conn.fetchval(
                 """
                 SELECT cp1.conversation_id
@@ -69,17 +64,15 @@ class ConversationService:
                   AND cp1.user_id = $1
                   AND cp2.user_id = $2
                 """,
-                user_id_1,
-                user_id_2
+                user_id_1, user_id_2
             )
 
             if existing_conv_id:
                 return await cls.get_conversation_by_id(
-                    str(existing_conv_id),
-                    user_id_1
+                    str(existing_conv_id), user_id_1
                 )
 
-            # Create new direct conversation
+            # 3. Create new conversation
             now = datetime.now(timezone.utc)
             new_conv_id = str(uuid.uuid4())
 
@@ -87,44 +80,39 @@ class ConversationService:
                 """
                 INSERT INTO conversations
                     (id, type, last_message_at, created_at, updated_at)
-                VALUES
-                    ($1, 'direct', $2, $2, $2)
+                VALUES ($1, 'direct', $2, $2, $2)
                 """,
-                new_conv_id,
-                now
+                new_conv_id, now
             )
 
-            # Insert both participants
-            # FIX: 6 placeholders = 6 arguments
+            # 4. Insert participants - SEPARATE QUERIES (Fix for placeholder mismatch)
+            p1_id = str(uuid.uuid4())
+            p2_id = str(uuid.uuid4())
+
             await conn.execute(
                 """
                 INSERT INTO conversation_participants
-                    (id, conversation_id, user_id, joined_at, last_read_at)
-                VALUES
-                    ($1, $2, $3, $4, $4),
-                    ($5, $2, $6, $4, $4)
+                    (id, conversation_id, user_id, joined_at)
+                VALUES ($1, $2, $3, $4)
                 """,
-                str(uuid.uuid4()),
-                new_conv_id,
-                user_id_1,
-                now,
-                str(uuid.uuid4()),
-                user_id_2
+                p1_id, new_conv_id, user_id_1, now
             )
 
-        return await cls.get_conversation_by_id(
-            new_conv_id,
-            user_id_1
-        )
+            await conn.execute(
+                """
+                INSERT INTO conversation_participants
+                    (id, conversation_id, user_id, joined_at)
+                VALUES ($1, $2, $3, $4)
+                """,
+                p2_id, new_conv_id, user_id_2, now
+            )
+
+        return await cls.get_conversation_by_id(new_conv_id, user_id_1)
 
     @classmethod
-    async def get_user_conversations(
-        cls,
-        user_id: str
-    ) -> List[ConversationResponse]:
+    async def get_user_conversations(cls, user_id: str) -> List[ConversationResponse]:
 
         pool = get_pg_pool()
-
         if not pool:
             return []
 
@@ -133,8 +121,7 @@ class ConversationService:
                 """
                 SELECT c.id, c.type, c.last_message_at, c.created_at
                 FROM conversations c
-                JOIN conversation_participants cp
-                    ON c.id = cp.conversation_id
+                JOIN conversation_participants cp ON c.id = cp.conversation_id
                 WHERE cp.user_id = $1
                 ORDER BY c.last_message_at DESC
                 """,
@@ -142,12 +129,8 @@ class ConversationService:
             )
 
         out = []
-
         for r in conv_rows:
-            conv_resp = await cls.get_conversation_by_id(
-                str(r["id"]),
-                user_id
-            )
+            conv_resp = await cls.get_conversation_by_id(str(r["id"]), user_id)
             out.append(conv_resp)
 
         return out
@@ -160,7 +143,6 @@ class ConversationService:
     ) -> ConversationResponse:
 
         pool = get_pg_pool()
-
         if not pool:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -168,8 +150,6 @@ class ConversationService:
             )
 
         async with pool.acquire() as conn:
-
-            # Get conversation
             conv = await conn.fetchrow(
                 """
                 SELECT id, type, last_message_at, created_at
@@ -178,83 +158,58 @@ class ConversationService:
                 """,
                 conversation_id
             )
-
             if not conv:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Conversation not found."
                 )
 
-            # Validate participant
             is_participant = await conn.fetchval(
                 """
-                SELECT 1
-                FROM conversation_participants
-                WHERE conversation_id = $1
-                  AND user_id = $2
+                SELECT 1 FROM conversation_participants
+                WHERE conversation_id = $1 AND user_id = $2
                 """,
-                conversation_id,
-                current_user_id
+                conversation_id, current_user_id
             )
-
             if not is_participant:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="You are not authorized to access this conversation."
                 )
 
-            # Get all participants
             part_rows = await conn.fetch(
                 """
                 SELECT
-                    u.id,
-                    u.username,
-                    u.full_name,
-                    u.avatar_url,
-                    u.is_online,
+                    u.id, u.username, u.full_name, u.avatar_url, u.is_online,
                     cp.last_read_message_id
                 FROM conversation_participants cp
-                JOIN users u
-                    ON cp.user_id = u.id
+                JOIN users u ON cp.user_id = u.id
                 WHERE cp.conversation_id = $1
                 """,
                 conversation_id
             )
 
             group_details = None
-
             if conv["type"] == "group":
                 grp = await conn.fetchrow(
                     """
-                    SELECT
-                        id,
-                        name,
-                        description,
-                        avatar_url,
-                        creator_id,
-                        is_teacher_group,
-                        created_at
+                    SELECT id, name, description, avatar_url, creator_id,
+                           is_teacher_group, created_at
                     FROM groups
                     WHERE conversation_id = $1
                     """,
                     conversation_id
                 )
-
                 if grp:
                     group_details = {
                         "group_id": str(grp["id"]),
                         "name": grp["name"],
                         "description": grp["description"],
                         "avatar_url": grp["avatar_url"],
-                        "creator_id": (
-                            str(grp["creator_id"])
-                            if grp["creator_id"]
-                            else None
-                        ),
+                        "creator_id": str(grp["creator_id"]) if grp["creator_id"] else None,
                         "is_teacher_group": grp["is_teacher_group"]
                     }
 
-        # Build participants
         participants = [
             ConversationParticipant(
                 user_id=str(p["id"]),
@@ -270,19 +225,14 @@ class ConversationService:
         # Fetch last message from MongoDB
         last_message = None
         unread_count = 0
-
         mongo_db = get_mongodb()
 
         if mongo_db is not None:
             try:
                 last_msg_doc = await mongo_db["messages"].find_one(
-                    {
-                        "conversation_id": conversation_id,
-                        "is_deleted": False
-                    },
+                    {"conversation_id": conversation_id, "is_deleted": False},
                     sort=[("created_at", -1)]
                 )
-
                 if last_msg_doc:
                     last_message = {
                         "message_id": last_msg_doc.get("message_id"),
@@ -292,52 +242,29 @@ class ConversationService:
                         "created_at": last_msg_doc.get("created_at")
                     }
 
-                # Calculate unread count
                 curr_part = next(
-                    (
-                        p for p in part_rows
-                        if str(p["id"]) == current_user_id
-                    ),
+                    (p for p in part_rows if str(p["id"]) == current_user_id),
                     None
                 )
-
-                last_read_msg_id = (
-                    curr_part["last_read_message_id"]
-                    if curr_part
-                    else None
-                )
+                last_read_msg_id = curr_part["last_read_message_id"] if curr_part else None
 
                 if last_read_msg_id:
-
                     ref_msg = await mongo_db["messages"].find_one(
                         {"message_id": last_read_msg_id}
                     )
-
                     if ref_msg:
-                        unread_count = await mongo_db["messages"].count_documents(
-                            {
-                                "conversation_id": conversation_id,
-                                "created_at": {
-                                    "$gt": ref_msg["created_at"]
-                                },
-                                "sender_id": {
-                                    "$ne": current_user_id
-                                },
-                                "is_deleted": False
-                            }
-                        )
-
-                else:
-                    unread_count = await mongo_db["messages"].count_documents(
-                        {
+                        unread_count = await mongo_db["messages"].count_documents({
                             "conversation_id": conversation_id,
-                            "sender_id": {
-                                "$ne": current_user_id
-                            },
+                            "created_at": {"$gt": ref_msg["created_at"]},
+                            "sender_id": {"$ne": current_user_id},
                             "is_deleted": False
-                        }
-                    )
-
+                        })
+                else:
+                    unread_count = await mongo_db["messages"].count_documents({
+                        "conversation_id": conversation_id,
+                        "sender_id": {"$ne": current_user_id},
+                        "is_deleted": False
+                    })
             except Exception:
                 pass
 
@@ -358,24 +285,16 @@ class ConversationService:
         conversation_id: str,
         user_id: str
     ) -> bool:
-
         """Validate conversation membership through Supabase before accessing MongoDB messages."""
-
         pool = get_pg_pool()
-
         if not pool:
             return False
-
         async with pool.acquire() as conn:
             is_member = await conn.fetchval(
                 """
-                SELECT 1
-                FROM conversation_participants
-                WHERE conversation_id = $1
-                  AND user_id = $2
+                SELECT 1 FROM conversation_participants
+                WHERE conversation_id = $1 AND user_id = $2
                 """,
-                conversation_id,
-                user_id
+                conversation_id, user_id
             )
-
         return bool(is_member)
