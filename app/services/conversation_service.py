@@ -85,7 +85,7 @@ class ConversationService:
                 new_conv_id, now
             )
 
-            # 4. Insert participants - SEPARATE QUERIES (Fix for placeholder mismatch)
+            # 4. Insert participants - SEPARATE QUERIES to avoid placeholder mismatch
             p1_id = str(uuid.uuid4())
             p2_id = str(uuid.uuid4())
 
